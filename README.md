@@ -34,6 +34,7 @@ left blank.
 | `sortBy`      | string | `selection` | Cell order: `selection` (as picked), `title`, or `created`. |
 | `headerText`  | string | *(empty)*   | Optional title drawn across the top of the sheet. |
 | `fileType`    | string | `png`       | Output format: `png`, `jpg`, or `webp`. PNG stays crisp; JPG/WebP are smaller but add compression noise on the busy dither. |
+| `frame`       | string | `default`   | Frame behavior, use global app default, keep, crop, make square |
 | `scaleGapMargin` | string | `1`      | `1` (or blank) = treat `gutter`/`margin` as source pixels and scale them by `scaleFactor`; `0` = use them as output pixels. In the export dialog this appears as a **Yes/No** dropdown (stored as `1`/`0`). |
 
 The downloaded file is named `contact-sheet-<timestamp>.<ext>`.
