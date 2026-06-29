@@ -8,12 +8,6 @@ Built for [gb-printer-web](https://github.com/HerrZatacke/gb-printer-web) using 
 
 ![example contact sheet](./example-contact-sheet.png)
 
-Each thumbnail is rendered through the app's own pipeline, so it keeps each
-image's palette and rotation and follows your global **handle export frame**
-setting (keep / crop / square). Smaller/rotated images are
-centred (letterboxed) so every cell lines up, and any image that fails to decode
-gets a placeholder cell instead of breaking the whole sheet.
-
 ---
 
 ## Configuration

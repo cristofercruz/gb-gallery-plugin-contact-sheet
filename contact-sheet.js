@@ -99,6 +99,12 @@
     square_white: 'Make image squared (white)',
   };
 
+  // The dialog preview always renders thumbnails at this scale (1x), regardless
+  // of the export scale factor, so the preview stays light and consistent. The
+  // gap/margin are mapped into this 1x space so the preview stays proportional
+  // to the exported sheet (see renderPreview).
+  const PREVIEW_SCALE = 1;
+
   const normalizeFrameMode = (raw) => {
     const v = (raw || '').toString().trim().toLowerCase().replace(/[\s-]+/g, '_');
     if (FRAME_MODES.indexOf(v) !== -1) {
@@ -572,17 +578,17 @@
 
       this.progress(0.01);
 
-      // Pre-render every frame mode (at the configured scale) so switching the
-      // frame dropdown updates the live preview instantly. The chosen mode's set
-      // is reused for the export, so frames aren't rendered twice (the export only
-      // re-renders if the scale factor itself is changed in the dialog).
-      const loadedScaleFactor = this.scaleFactor;
+      // Pre-render every frame mode at 1x (PREVIEW_SCALE) so switching the frame
+      // dropdown updates the live preview instantly without re-rendering. Rendering
+      // at 1x keeps the preview light and consistent no matter what scale factor the
+      // last export used. The export re-renders at the chosen scale on confirm
+      // (reusing these 1x thumbnails only when the export scale is also 1x).
       const initialRaw = { ...this.config };
       const appFrame = appDefaultFrameMode();
       // 'default' in the dialog means "use the app's global frame setting".
       const resolveMode = (mode) => (mode === 'default' ? appFrame : mode);
 
-      return this.loadFrameVariants(images, loadedScaleFactor)
+      return this.loadFrameVariants(images, PREVIEW_SCALE)
         .then((cellsByMode) => {
           const init = normalizeConfig(this.config);
 
@@ -642,16 +648,16 @@
               return cached;
             }
 
-            // Thumbnails for every frame mode are pre-rendered at the loaded scale
-            // factor, so switching the frame mode just swaps in that mode's set.
-            // The chosen scale factor still changes the layout: gutter/margin are
-            // fixed output pixels (unless "scale gap & margin" is on), so they
-            // shrink relative to the thumbnails as the scale factor grows. Map the
-            // output-scale spacing back into the loaded-thumbnail coordinate space
-            // (ratio = loaded / chosen) so the proportions stay correct.
+            // Thumbnails for every frame mode are pre-rendered at 1x, so switching
+            // the frame mode just swaps in that mode's set. The chosen scale factor
+            // still changes the layout: with "scale gap & margin" off the gap/margin
+            // are fixed output pixels, so relative to the 1x thumbnails they shrink
+            // as the scale factor grows; with it on they track the thumbnails. Map
+            // the output-scale spacing into 1x space (ratio = 1 / chosen scale) so
+            // the preview proportions match the exported sheet.
             const cells = cellsByMode[mode] || cellsByMode[appFrame];
             const ordered = this.sortCells(cells, s.sortBy);
-            const ratio = loadedScaleFactor / s.scaleFactor;
+            const ratio = PREVIEW_SCALE / s.scaleFactor;
             const outSpacing = effectiveSpacing(s, s.scaleFactor);
             const previewSettings = {
               ...s,
@@ -711,14 +717,14 @@
 
               const wantMode = resolveMode(this.frameMode);
               const variant = cellsByMode[wantMode] || cellsByMode[appFrame];
-              if (this.scaleFactor === loadedScaleFactor && variant) {
-                // Scale unchanged: the chosen mode is already rendered at the right
-                // scale, so reuse it for the export (no re-render).
+              if (this.scaleFactor === PREVIEW_SCALE && variant) {
+                // Exporting at 1x: the pre-rendered preview thumbnails are already
+                // at the right scale, so reuse the chosen mode's set (no re-render).
                 return this.saveCanvas(composeOutput(variant));
               }
 
-              // Scale factor changed: re-render the thumbnails at the new scale and
-              // chosen frame mode.
+              // Any other scale: re-render the thumbnails at the chosen scale and
+              // frame mode for the exported file.
               this.progress(0.01);
               return this.loadCells(images).then((rescaled) => {
                 this.progress(0);
