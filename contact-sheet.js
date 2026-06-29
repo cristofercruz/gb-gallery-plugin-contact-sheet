@@ -99,11 +99,6 @@
     square_white: 'Make image squared (white)',
   };
 
-  // The dialog preview pre-renders every frame mode at this (small) scale so the
-  // preview can switch between modes instantly. The exported file is rendered at
-  // the real configured scale on confirm.
-  const PREVIEW_SCALE = 1;
-
   const normalizeFrameMode = (raw) => {
     const v = (raw || '').toString().trim().toLowerCase().replace(/[\s-]+/g, '_');
     if (FRAME_MODES.indexOf(v) !== -1) {
@@ -333,46 +328,6 @@
       }));
     }
 
-    // Pre-render every frame mode (at a small preview scale) so the dialog preview
-    // can switch frame modes instantly. Returns { mode: cells[] }. Metadata is
-    // fetched once per image and shared across the modes.
-    loadFrameVariants(images, scaleFactor) {
-      const total = Math.max(1, images.length * FRAME_MODES.length);
-      let done = 0;
-      const tick = () => {
-        done += 1;
-        this.progress(Math.min(0.99, Math.max(0.01, done / total)));
-      };
-
-      const metas = Promise.all(images.map((image) => image.getMeta().catch(() => ({}))));
-      const perMode = Promise.all(FRAME_MODES.map((mode) => Promise.all(images.map((image) => (
-        image.getCanvas({ scaleFactor, handleExportFrame: mode })
-          .then((canvas) => {
-            tick();
-            return canvas;
-          })
-          .catch(() => {
-            tick();
-            return null;
-          })
-      )))));
-
-      return Promise.all([metas, perMode]).then((res) => {
-        const metaList = res[0];
-        const modeCanvases = res[1];
-        const byMode = {};
-        FRAME_MODES.forEach((mode, mi) => {
-          byMode[mode] = images.map((unused, i) => ({
-            index: i,
-            meta: metaList[i] || {},
-            canvas: modeCanvases[mi][i],
-          }));
-        });
-
-        return byMode;
-      });
-    }
-
     // Order cells according to the given sort mode.
     sortCells(cells, sortBy) {
       const sorted = cells.slice();
@@ -576,14 +531,15 @@
 
       this.progress(0.01);
 
+      // Thumbnails are rendered once at the current scale factor and frame mode.
+      // Changing either in the dialog re-renders them on confirm (see below).
+      const loadedScaleFactor = this.scaleFactor;
+      const loadedFrameMode = this.frameMode;
       const initialRaw = { ...this.config };
       const appFrame = appDefaultFrameMode();
-      // 'default' in the dialog means "use the app's global frame setting", which
-      // resolves to one of the concrete pre-rendered modes.
-      const resolveMode = (mode) => (mode === 'default' ? appFrame : mode);
 
-      return this.loadFrameVariants(images, PREVIEW_SCALE)
-        .then((cellsByMode) => {
+      return this.loadCells(images)
+        .then((cells) => {
           const init = normalizeConfig(this.config);
 
           // --- option fields, seeded from the current config -----------------
@@ -629,25 +585,23 @@
           let cacheSrc = null;
           const renderPreview = (values) => {
             const s = normalizeConfig({ ...initialRaw, ...values });
-            const mode = resolveMode(s.frameMode);
             const key = JSON.stringify([
-              s.columns, s.gutter, s.margin, s.scaleFactor, mode,
+              s.columns, s.gutter, s.margin, s.scaleFactor,
               s.background, s.labels, s.sortBy, s.headerText, s.scaleGapMargin,
             ]);
             if (key === cacheKey) {
               return cacheSrc;
             }
 
-            const cells = cellsByMode[mode] || cellsByMode[appFrame];
             const ordered = this.sortCells(cells, s.sortBy);
-            // Preview thumbnails are pre-rendered at PREVIEW_SCALE for every frame
-            // mode, so switching the frame mode updates the preview instantly. The
-            // chosen scale factor still changes the layout: gutter/margin are fixed
-            // output pixels (unless "scale gap & margin" is on), so they shrink
-            // relative to the thumbnails as the scale factor grows. Map the
-            // output-scale spacing back into the preview-thumbnail coordinate space
-            // (ratio = PREVIEW_SCALE / chosen) so the proportions stay correct.
-            const ratio = PREVIEW_SCALE / s.scaleFactor;
+            // Thumbnails are rendered once at the loaded scale factor and frame
+            // mode. The chosen scale factor still changes the layout: gutter/margin
+            // are fixed output pixels (unless "scale gap & margin" is on), so they
+            // shrink relative to the thumbnails as the scale factor grows. Map the
+            // output-scale spacing back into the loaded-thumbnail coordinate space
+            // (ratio = loaded / chosen) so the proportions stay correct. The frame
+            // mode is applied to the exported file on confirm.
+            const ratio = loadedScaleFactor / s.scaleFactor;
             const outSpacing = effectiveSpacing(s, s.scaleFactor);
             const previewSettings = {
               ...s,
@@ -690,7 +644,7 @@
           this.progress(0);
 
           this.setDialog({
-            message: `Contact sheet — ${images.length} images`,
+            message: `Contact sheet — ${cells.length} images`,
             questions: (values) => ([
               {
                 type: 'image',
@@ -705,13 +659,16 @@
               // updates the stored plugin config (which the app saves to IndexedDB).
               this.setConfig(toConfigUpdate(values));
 
-              // The preview thumbnails are small/multi-mode, so always render the
-              // export at the real scale factor with the chosen frame mode.
-              this.progress(0.01);
-              return this.loadCells(images).then((outputCells) => {
-                this.progress(0);
-                return this.saveCanvas(composeOutput(outputCells));
-              });
+              if (this.scaleFactor !== loadedScaleFactor || this.frameMode !== loadedFrameMode) {
+                // Scale factor or frame mode changed -> re-render the thumbnails.
+                this.progress(0.01);
+                return this.loadCells(images).then((rescaled) => {
+                  this.progress(0);
+                  return this.saveCanvas(composeOutput(rescaled));
+                });
+              }
+
+              return this.saveCanvas(composeOutput(cells));
             },
             deny: () => {
               this.dismissDialog();
