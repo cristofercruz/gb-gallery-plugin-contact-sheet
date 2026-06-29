@@ -87,6 +87,46 @@
   const SORT_OPTIONS = ['selection', 'title', 'created'];
   const FILETYPE_OPTIONS = ['png', 'jpg', 'webp'];
 
+  // Frame handling. These string values are the gb-image-decoder ExportFrameMode
+  // values that image.getCanvas({ handleExportFrame }) accepts. 'default' is our
+  // own sentinel meaning "omit handleExportFrame", i.e. use the app's global
+  // "handle export frame" setting.
+  const FRAME_MODES = ['keep', 'crop', 'square_black', 'square_white'];
+  const FRAME_MODE_LABELS = {
+    keep: 'Keep frame',
+    crop: 'Crop frame',
+    square_black: 'make image squared (add black)',
+    square_white: 'Make image squared (add white)',
+  };
+
+  const normalizeFrameMode = (raw) => {
+    const v = (raw || '').toString().trim().toLowerCase().replace(/[\s-]+/g, '_');
+    if (FRAME_MODES.indexOf(v) !== -1) {
+      return v;
+    }
+
+    return 'default'; // blank, "default", or anything unknown -> use the app default
+  };
+
+  // Read the app's global "handle export frame" setting from its persisted
+  // settings (zustand-persist in localStorage). Falls back to the app default.
+  const appDefaultFrameMode = () => {
+    try {
+      const raw = window.localStorage.getItem('gbp-z-web-settings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const mode = parsed && parsed.state && parsed.state.handleExportFrame;
+        if (FRAME_MODES.indexOf(mode) !== -1) {
+          return mode;
+        }
+      }
+    } catch (error) {
+      // ignore parse/storage errors and fall back
+    }
+
+    return 'keep'; // gb-printer-web's own default for handleExportFrame
+  };
+
   const fileTypeInfo = (raw) => {
     switch ((raw || '').toString().trim().toLowerCase()) {
       case 'jpg':
@@ -123,6 +163,7 @@
       labels: LABELS_OPTIONS.indexOf(labels) === -1 ? 'none' : labels,
       sortBy: SORT_OPTIONS.indexOf(sortBy) === -1 ? 'selection' : sortBy,
       headerText: (cfg.headerText || '').toString(),
+      frameMode: normalizeFrameMode(cfg.frameMode),
       scaleGapMargin: flagDefaultYes(cfg.scaleGapMargin),
       fileType: ft.fileType,
       mimeType: ft.mimeType,
@@ -204,6 +245,10 @@
           label: 'Output file type: "png", "jpg" or "webp"',
           type: 'string',
         },
+        frameMode: {
+          label: 'Frame handling: "keep", "crop", "square_white" or "square_black" (blank = use the app\u2019s global frame setting)',
+          type: 'string',
+        },
         scaleGapMargin: {
           label: 'Scale gap & margin with the scale factor: 1/blank = on (treat them as source pixels), 0 = off',
           type: 'string',
@@ -241,6 +286,7 @@
       this.labels = s.labels;
       this.sortBy = s.sortBy;
       this.headerText = s.headerText;
+      this.frameMode = s.frameMode;
       this.scaleGapMargin = s.scaleGapMargin;
       this.fileType = s.fileType;
       this.mimeType = s.mimeType;
@@ -257,9 +303,13 @@
       let done = 0;
       const total = images.length;
 
-      // Note: handleExportFrame is intentionally omitted, so getCanvas defaults
-      // to the app's global "handle export frame" setting for every image.
+      // Render at the configured scale. The frame mode is applied via
+      // handleExportFrame; when it's 'default' we omit it so getCanvas falls back
+      // to the app's global "handle export frame" setting.
       const canvasOptions = { scaleFactor: this.scaleFactor };
+      if (this.frameMode !== 'default') {
+        canvasOptions.handleExportFrame = this.frameMode;
+      }
 
       const tick = () => {
         done += 1;
@@ -481,9 +531,10 @@
 
       this.progress(0.01);
 
-      // Thumbnails are rendered once at the current scale factor. Changing the
-      // scale factor in the dialog re-renders them on confirm (see below).
+      // Thumbnails are rendered once at the current scale factor and frame mode.
+      // Changing either in the dialog re-renders them on confirm (see below).
       const loadedScaleFactor = this.scaleFactor;
+      const loadedFrameMode = this.frameMode;
       const initialRaw = { ...this.config };
 
       return this.loadCells(images)
@@ -505,9 +556,21 @@
             })),
           });
 
+          // Frame handling, with an extra "use app default" option at the top
+          // whose label spells out the app's current global frame behaviour.
+          const appFrame = appDefaultFrameMode();
+          const frameOptions = [
+            { name: `Use app default setting (${FRAME_MODE_LABELS[appFrame]})`, value: 'default' },
+            { name: FRAME_MODE_LABELS.keep, value: 'keep' },
+            { name: FRAME_MODE_LABELS.crop, value: 'crop' },
+            { name: FRAME_MODE_LABELS.square_white, value: 'square_white' },
+            { name: FRAME_MODE_LABELS.square_black, value: 'square_black' },
+          ].map((o) => ({ ...o, selected: o.value === init.frameMode }));
+
           const optionQuestions = [
             numberField('columns', 'Columns', init.columns),
             numberField('scaleFactor', 'Thumbnail scale factor (×)', init.scaleFactor),
+            { type: 'select', label: 'Frame', key: 'frameMode', options: frameOptions },
             numberField('gutter', 'Gap between thumbnails (px)', init.gutter),
             numberField('margin', 'Outer margin (px)', init.margin),
             selectField('scaleGapMargin', 'Scale gap & margin by the scale factor',
@@ -566,6 +629,7 @@
               sortBy: s.sortBy,
               headerText: s.headerText,
               fileType: s.fileType,
+              frameMode: s.frameMode,
               scaleGapMargin: s.scaleGapMargin ? '1' : '0',
             };
           };
@@ -597,8 +661,8 @@
               // updates the stored plugin config (which the app saves to IndexedDB).
               this.setConfig(toConfigUpdate(values));
 
-              if (this.scaleFactor !== loadedScaleFactor) {
-                // Scale factor changed -> re-render thumbnails at the new scale.
+              if (this.scaleFactor !== loadedScaleFactor || this.frameMode !== loadedFrameMode) {
+                // Scale factor or frame mode changed -> re-render the thumbnails.
                 this.progress(0.01);
                 return this.loadCells(images).then((rescaled) => {
                   this.progress(0);
