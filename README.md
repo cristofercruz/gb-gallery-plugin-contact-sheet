@@ -10,6 +10,12 @@ Built for [gb-printer-web](https://github.com/HerrZatacke/gb-printer-web) using 
 
 ---
 
+## Installation
+
+Install into the Plugin Settings tab of the gallery app using this URL https://cdn.jsdelivr.net/gh/cristofercruz/gb-gallery-plugin-contact-sheet@main/contact-sheet.js
+
+---
+
 ## Configuration
 
 All fields are optional. They appear as editable fields **both** on the plugin's
