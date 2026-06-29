@@ -27,12 +27,13 @@ left blank.
 |---------------|--------|-------------|-------------|
 | `columns`     | number | `5`         | Thumbnails per row. |
 | `scaleFactor` | number | `1`         | Per‑thumbnail render scale, **integer only** (`1` = native GB size, `2` = 2×, …). Higher = sharper and larger file. |
-| `gutter`      | number | `0`         | Spacing *between* thumbnails. Output pixels, or source pixels if **Scale gap & margin** is on (see below). |
+| `gutterH`     | number | `0`         | Horizontal gap between columns. Output pixels, or source pixels if Scale gap & margin is on. |
+| `gutterV`     | number | `0`         | Vertical gap between rows. Output pixels, or source pixels if Scale gap & margin is on. |
 | `margin`      | number | `0`         | Outer margin around the whole sheet, independent of the gutter. Output pixels, or source pixels if **Scale gap & margin** is on. |
 | `background`  | string | `#1e1e1e`   | Sheet background colour (`#rgb` or `#rrggbb`). Label colour auto‑switches for light vs dark. |
 | `labels`      | string | `none`      | What to print under each image: `number`, `title`, `created`, `number+title`, or `none`. |
 | `sortBy`      | string | `selection` | Cell order: `selection` (as picked), `title`, or `created`. |
-| `headerText`  | string | *(empty)*   | Optional title drawn across the top of the sheet. |
+| `headerText`  | string | *(empty)*   | Optional title drawn across the top of the sheet. Type \n to force a line break. |
 | `fileType`    | string | `png`       | Output format: `png`, `jpg`, or `webp`. PNG stays crisp; JPG/WebP are smaller but add compression noise on the busy dither. |
 | `frame`       | string | `default`   | Frame behavior, use global app default, keep, crop, make square |
 | `scaleGapMargin` | string | `1`      | `1` (or blank) = treat `gutter`/`margin` as source pixels and scale them by `scaleFactor`; `0` = use them as output pixels. In the export dialog this appears as a **Yes/No** dropdown (stored as `1`/`0`). |

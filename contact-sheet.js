@@ -169,7 +169,10 @@
     return {
       columns: clampInt(cfg.columns, 5, 1, 100),
       scaleFactor: clampInt(cfg.scaleFactor, 1, 1, 10),
-      gutter: clampInt(cfg.gutter, 0, 0, 400),
+      // Horizontal gap (between columns) and vertical gap (between rows). A legacy
+      // single `gutter` value (from before the split) seeds both.
+      gutterH: clampInt(cfg.gutterH, clampInt(cfg.gutter, 0, 0, 400), 0, 400),
+      gutterV: clampInt(cfg.gutterV, clampInt(cfg.gutter, 0, 0, 400), 0, 400),
       margin: clampInt(cfg.margin, 0, 0, 1000),
       background: ((cfg.background || '').toString().trim()) || '#1e1e1e',
       labels: LABELS_OPTIONS.indexOf(labels) === -1 ? 'none' : labels,
@@ -183,12 +186,58 @@
     };
   };
 
-  // Effective gutter/margin in output pixels for a given settings + scale factor.
+  // Effective gaps/margin in output pixels for a given settings + scale factor.
   const effectiveSpacing = (settings, scaleFactor) => ({
-    gutter: settings.scaleGapMargin ? settings.gutter * scaleFactor : settings.gutter,
+    gutterH: settings.scaleGapMargin ? settings.gutterH * scaleFactor : settings.gutterH,
+    gutterV: settings.scaleGapMargin ? settings.gutterV * scaleFactor : settings.gutterV,
     margin: settings.scaleGapMargin ? settings.margin * scaleFactor : settings.margin,
     headerTrim: settings.scaleGapMargin ? HEADER_TRIM * scaleFactor : HEADER_TRIM,
   });
+
+  // Greedy word-wrap into lines that each fit `maxWidth`, using the supplied
+  // (already font-configured) measuring context. A single word longer than
+  // maxWidth is broken character-by-character so nothing runs off the edge.
+  const wrapTextLines = (measureCtx, text, maxWidth) => {
+    const fits = (str) => measureCtx.measureText(str).width <= maxWidth;
+    const lines = [];
+    let line = '';
+
+    const breakLongWord = (word) => {
+      let chunk = '';
+      for (let i = 0; i < word.length; i += 1) {
+        const ch = word[i];
+        if (!chunk || fits(chunk + ch)) {
+          chunk += ch;
+        } else {
+          lines.push(chunk);
+          chunk = ch;
+        }
+      }
+
+      return chunk;
+    };
+
+    text.split(/\s+/).filter(Boolean).forEach((word) => {
+      const candidate = line ? `${line} ${word}` : word;
+      if (fits(candidate)) {
+        line = candidate;
+        return;
+      }
+
+      if (line) {
+        lines.push(line);
+        line = '';
+      }
+
+      line = fits(word) ? word : breakLongWord(word);
+    });
+
+    if (line) {
+      lines.push(line);
+    }
+
+    return lines;
+  };
 
   // Build a (possibly downscaled) data URL for the preview dialog.
   // Any downscale uses an integer divisor with smoothing off, so the preview
@@ -230,8 +279,12 @@
           label: 'Thumbnail render scale (1x, 2x, ...)',
           type: 'number',
         },
-        gutter: {
-          label: 'Spacing between thumbnails (px)',
+        gutterH: {
+          label: 'Horizontal gap between columns (px)',
+          type: 'number',
+        },
+        gutterV: {
+          label: 'Vertical gap between rows (px)',
           type: 'number',
         },
         margin: {
@@ -251,7 +304,7 @@
           type: 'string',
         },
         headerText: {
-          label: 'Optional title drawn across the top',
+          label: 'Optional title drawn across the top (\\n = line break)',
           type: 'string',
         },
         fileType: {
@@ -293,7 +346,8 @@
       const s = normalizeConfig(this.config);
       this.columns = s.columns;
       this.scaleFactor = s.scaleFactor;
-      this.gutter = s.gutter;
+      this.gutterH = s.gutterH;
+      this.gutterV = s.gutterV;
       this.margin = s.margin;
       this.background = s.background;
       this.labels = s.labels;
@@ -413,8 +467,8 @@
     }
 
     // Compose the grid onto a fresh canvas and return it. `settings` is a
-    // normalised settings object whose `gutter`/`margin` are already the
-    // effective output pixels to use.
+    // normalised settings object whose `gutterH`/`gutterV`/`margin` are already
+    // the effective output pixels to use.
     compose(cells, settings) {
       const bgRgb = hexToRgb(settings.background);
       const isDark = luminance(bgRgb) < 0.5;
@@ -448,21 +502,43 @@
       const cellH = maxH + labelBand;
       const cols = settings.columns;
       const rows = Math.ceil(cells.length / cols);
-      const g = settings.gutter; // spacing between thumbnails (effective output px)
+      const gx = settings.gutterH; // horizontal gap between columns (effective output px)
+      const gy = settings.gutterV; // vertical gap between rows (effective output px)
       const m = settings.margin; // outer margin around the whole sheet (effective output px)
 
-      const headerText = settings.headerText.trim();
-      const headerHeight = headerText ? Math.round(headerFontPx * 1.4) : 0;
+      // Sheet width is independent of the header.
+      const sheetW = (2 * m) + (cols * cellW) + ((cols - 1) * gx);
+
+      // Header: honour explicit line breaks (a literal "\n" in the text, or a real
+      // newline) first, then wrap each resulting line to the inner content width so
+      // long titles span multiple lines instead of running off the edge. The band
+      // grows with the total line count; an empty line (e.g. "\n\n") is kept as a gap.
+      const headerText = settings.headerText.replace(/\\n/g, '\n').trim();
+      const headerLineHeight = Math.round(headerFontPx * 1.4);
+      let headerLines = [];
+      if (headerText) {
+        const measureCtx = document.createElement('canvas').getContext('2d');
+        measureCtx.font = `700 ${headerFontPx}px ${fontFamily}`;
+        const headerMaxW = Math.max(1, sheetW - (2 * m));
+        headerText.split('\n').forEach((paragraph) => {
+          if (paragraph.trim()) {
+            headerLines = headerLines.concat(wrapTextLines(measureCtx, paragraph, headerMaxW));
+          } else {
+            headerLines.push('');
+          }
+        });
+      }
+
+      const headerHeight = headerLines.length * headerLineHeight;
       // With a header, only the space *above* it looks too airy, so trim the top
-      // margin by headerTrim (already scaled like the gap/margin), clamped to >= 0.
-      // The gap between the header and the images (the gutter) and the left/right/
-      // bottom margins are left unchanged.
+      // margin by headerTrim (already scaled like the gaps/margin), clamped to >= 0.
+      // The gap between the header and the images (the vertical gap) and the
+      // left/right/bottom margins are left unchanged.
       const trim = headerHeight ? (settings.headerTrim || 0) : 0;
       const topMargin = Math.max(0, m - trim);
-      const contentTop = topMargin + (headerHeight ? (headerHeight + g) : 0);
+      const contentTop = topMargin + (headerHeight ? (headerHeight + gy) : 0);
 
-      const sheetW = (2 * m) + (cols * cellW) + ((cols - 1) * g);
-      const sheetH = contentTop + (rows * cellH) + ((rows - 1) * g) + m;
+      const sheetH = contentTop + (rows * cellH) + ((rows - 1) * gy) + m;
 
       const canvas = document.createElement('canvas');
       canvas.width = sheetW;
@@ -487,14 +563,16 @@
         ctx.font = `700 ${headerFontPx}px ${fontFamily}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(headerText, sheetW / 2, topMargin + (headerHeight / 2));
+        headerLines.forEach((headerLine, i) => {
+          ctx.fillText(headerLine, sheetW / 2, topMargin + (i * headerLineHeight) + (headerLineHeight / 2));
+        });
       }
 
       cells.forEach((cell, i) => {
         const col = i % cols;
         const row = Math.floor(i / cols);
-        const cellX = m + (col * (cellW + g));
-        const cellY = contentTop + (row * (cellH + g));
+        const cellX = m + (col * (cellW + gx));
+        const cellY = contentTop + (row * (cellH + gy));
 
         if (cell.canvas) {
           const imgX = cellX + Math.round((cellW - cell.canvas.width) / 2);
@@ -632,14 +710,15 @@
             numberField('columns', 'Columns', init.columns),
             numberField('scaleFactor', 'Thumbnail scale factor (×)', init.scaleFactor),
             { type: 'select', label: 'Frame', key: 'frameMode', options: frameOptions },
-            numberField('gutter', 'Gap between thumbnails (px)', init.gutter),
+            numberField('gutterH', 'Horizontal gap (px)', init.gutterH),
+            numberField('gutterV', 'Vertical gap (px)', init.gutterV),
             numberField('margin', 'Outer margin (px)', init.margin),
             selectField('scaleGapMargin', 'Scale gap & margin by the scale factor',
               ['1', '0'], init.scaleGapMargin ? '1' : '0', (v) => (v === '1' ? 'Yes' : 'No')),
             { type: 'text', label: 'Background colour (hex)', key: 'background', initialValue: init.background },
             selectField('labels', 'Labels', LABELS_OPTIONS, init.labels),
             selectField('sortBy', 'Order', SORT_OPTIONS, init.sortBy),
-            { type: 'text', label: 'Header text (optional)', key: 'headerText', initialValue: init.headerText },
+            { type: 'text', label: 'Header text (optional, \\n = line break)', key: 'headerText', initialValue: init.headerText },
             selectField('fileType', 'File type', FILETYPE_OPTIONS, init.fileType, (v) => v.toUpperCase()),
           ];
 
@@ -653,7 +732,7 @@
             const s = normalizeConfig({ ...initialRaw, ...values });
             const mode = resolveMode(s.frameMode);
             const key = JSON.stringify([
-              s.columns, s.gutter, s.margin, s.scaleFactor, mode,
+              s.columns, s.gutterH, s.gutterV, s.margin, s.scaleFactor, mode,
               s.background, s.labels, s.sortBy, s.headerText, s.scaleGapMargin,
             ]);
             const cached = previewCache.get(key);
@@ -674,7 +753,8 @@
             const outSpacing = effectiveSpacing(s, s.scaleFactor);
             const previewSettings = {
               ...s,
-              gutter: Math.round(outSpacing.gutter * ratio),
+              gutterH: Math.round(outSpacing.gutterH * ratio),
+              gutterV: Math.round(outSpacing.gutterV * ratio),
               margin: Math.round(outSpacing.margin * ratio),
               headerTrim: Math.round(outSpacing.headerTrim * ratio),
             };
@@ -690,7 +770,8 @@
             return {
               columns: s.columns,
               scaleFactor: s.scaleFactor,
-              gutter: s.gutter,
+              gutterH: s.gutterH,
+              gutterV: s.gutterV,
               margin: s.margin,
               background: s.background,
               labels: s.labels,
@@ -708,7 +789,11 @@
             const ordered = this.sortCells(outputCells, s.sortBy);
             const spacing = effectiveSpacing(s, s.scaleFactor);
             return this.compose(ordered, {
-              ...s, gutter: spacing.gutter, margin: spacing.margin, headerTrim: spacing.headerTrim,
+              ...s,
+              gutterH: spacing.gutterH,
+              gutterV: spacing.gutterV,
+              margin: spacing.margin,
+              headerTrim: spacing.headerTrim,
             });
           };
 
