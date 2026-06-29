@@ -105,6 +105,12 @@
   // to the exported sheet (see renderPreview).
   const PREVIEW_SCALE = 1;
 
+  // When a header is present, tighten the space *above* it by this many (source)
+  // pixels — the header otherwise looks a little too airy. The gap between the
+  // header and the images is left unchanged. Scaled like the gap/margin (see
+  // effectiveSpacing).
+  const HEADER_TRIM = 6;
+
   const normalizeFrameMode = (raw) => {
     const v = (raw || '').toString().trim().toLowerCase().replace(/[\s-]+/g, '_');
     if (FRAME_MODES.indexOf(v) !== -1) {
@@ -181,6 +187,7 @@
   const effectiveSpacing = (settings, scaleFactor) => ({
     gutter: settings.scaleGapMargin ? settings.gutter * scaleFactor : settings.gutter,
     margin: settings.scaleGapMargin ? settings.margin * scaleFactor : settings.margin,
+    headerTrim: settings.scaleGapMargin ? HEADER_TRIM * scaleFactor : HEADER_TRIM,
   });
 
   // Build a (possibly downscaled) data URL for the preview dialog.
@@ -446,7 +453,13 @@
 
       const headerText = settings.headerText.trim();
       const headerHeight = headerText ? Math.round(headerFontPx * 1.4) : 0;
-      const contentTop = m + (headerHeight ? (headerHeight + g) : 0);
+      // With a header, only the space *above* it looks too airy, so trim the top
+      // margin by headerTrim (already scaled like the gap/margin), clamped to >= 0.
+      // The gap between the header and the images (the gutter) and the left/right/
+      // bottom margins are left unchanged.
+      const trim = headerHeight ? (settings.headerTrim || 0) : 0;
+      const topMargin = Math.max(0, m - trim);
+      const contentTop = topMargin + (headerHeight ? (headerHeight + g) : 0);
 
       const sheetW = (2 * m) + (cols * cellW) + ((cols - 1) * g);
       const sheetH = contentTop + (rows * cellH) + ((rows - 1) * g) + m;
@@ -474,7 +487,7 @@
         ctx.font = `700 ${headerFontPx}px ${fontFamily}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(headerText, sheetW / 2, m + (headerHeight / 2));
+        ctx.fillText(headerText, sheetW / 2, topMargin + (headerHeight / 2));
       }
 
       cells.forEach((cell, i) => {
@@ -663,6 +676,7 @@
               ...s,
               gutter: Math.round(outSpacing.gutter * ratio),
               margin: Math.round(outSpacing.margin * ratio),
+              headerTrim: Math.round(outSpacing.headerTrim * ratio),
             };
             const sheet = this.compose(ordered, previewSettings);
             const src = previewSrc(sheet, 'image/png', undefined);
@@ -693,7 +707,9 @@
             const s = normalizeConfig(this.config);
             const ordered = this.sortCells(outputCells, s.sortBy);
             const spacing = effectiveSpacing(s, s.scaleFactor);
-            return this.compose(ordered, { ...s, gutter: spacing.gutter, margin: spacing.margin });
+            return this.compose(ordered, {
+              ...s, gutter: spacing.gutter, margin: spacing.margin, headerTrim: spacing.headerTrim,
+            });
           };
 
           // close the progress overlay before opening the dialog
