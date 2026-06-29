@@ -625,8 +625,11 @@
           ];
 
           // --- live preview, memoised by the values that affect it -----------
-          let cacheKey = null;
-          let cacheSrc = null;
+          // A Map (not a single slot) because the dialog hook also calls the
+          // questions builder with {} on every render to derive initial values;
+          // that would otherwise evict the real preview and force a full recompose
+          // on every keystroke. Caching every seen state keeps switching instant.
+          const previewCache = new Map();
           const renderPreview = (values) => {
             const s = normalizeConfig({ ...initialRaw, ...values });
             const mode = resolveMode(s.frameMode);
@@ -634,8 +637,9 @@
               s.columns, s.gutter, s.margin, s.scaleFactor, mode,
               s.background, s.labels, s.sortBy, s.headerText, s.scaleGapMargin,
             ]);
-            if (key === cacheKey) {
-              return cacheSrc;
+            const cached = previewCache.get(key);
+            if (cached !== undefined) {
+              return cached;
             }
 
             // Thumbnails for every frame mode are pre-rendered at the loaded scale
@@ -655,9 +659,9 @@
               margin: Math.round(outSpacing.margin * ratio),
             };
             const sheet = this.compose(ordered, previewSettings);
-            cacheSrc = previewSrc(sheet, 'image/png', undefined);
-            cacheKey = key;
-            return cacheSrc;
+            const src = previewSrc(sheet, 'image/png', undefined);
+            previewCache.set(key, src);
+            return src;
           };
 
           // Clean, clamped config values to persist back (so Settings stays tidy).
